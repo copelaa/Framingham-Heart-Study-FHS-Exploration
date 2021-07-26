@@ -1,6 +1,8 @@
 ---
 title: "Framingham Heart Study (FHS)exploration"
 output: html_notebook
+
+subtitle: "Diabetes at baseline and Mortality over 24 year followup" 
 ---
 
 This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
@@ -13,11 +15,201 @@ library(reshape2)
 library(dbplyr)
 library(readr)
 library(haven)
-
+library(plyr)
+library(knitr)
+library(epitools)
+library(stargazer)
+library(MASS)
 ```
+
+
 ```{r Import Data}
 #Data is saved as a Stata File
-read.dta()
+FHS = "https://github.com/copelaa/Framingham-Heart-Study-FHS-Exploration/blob/master/framinghamdata.dta?raw=true"
+FHS = read_stata(FHS)
+
+#Take a look at the imported data, and sunderstand the number of rows, columns and column names
+head(FHS)
+nrow(FHS)
+ncol(FHS)
+names(FHS)
+
+```
+
+
+```{r Time between checkups}
+#If you explore the data you see that individuals have the same category multiple times indicated by a blank, 1,2,3, meaning that they had multiple check ups over the years. 
+
+#Let's better understand the average time between these check ups using the age of the participants. 
+
+#Average time between original (baseline) and first checkup
+checkup1= FHS$age2-FHS$age1
+checkup1sd=sd(checkup1, na.rm=TRUE)
+checkup1_mean= mean(na.omit(checkup1))
+
+print(checkup1)
+
+#Average time between checkup 2 and checkup 3
+checkup2= FHS$age3-FHS$age2
+checkup2sd=sd(checkup2, na.rm=TRUE)
+checkup2_mean= mean(na.omit(checkup2))
+
+#On Average you see they are close to 6 years apart with a small standard deviation of .36 - .39 (4-5 months). This confirms that the check ups are relatively normal 
+```
+
+
+```{r Explore log odds mortality at baseline (1956)}
+sd<- sapply(FHS,sd)
+diabetes <- table(FHS$diabetes1,FHS$death)
+
+rownames(diabetes)<- c("No Diabetes", "Diabetes")
+colnames(diabetes)<- c("No Death","Death")
+print(diabetes)
+
+#Check Results
+sum(FHS$death == 1 & FHS$diabetes1==1, na.rm=TRUE)
+sum(FHS$death == 1 & FHS$diabetes1==0, na.rm=TRUE)
+sum(FHS$death == 0 & FHS$diabetes1==1, na.rm=TRUE)
+sum(FHS$death == 0 & FHS$diabetes1==0, na.rm=TRUE)
+
+
+logit_diabetes<-glm(death ~ diabetes1, data = FHS, family= "binomial")
+summary(logit_diabetes)
+suppressWarnings(stargazer(logit_diabetes,type="text"))
+
+```
+The estimated log odds of mortality among participants with no diabetes is beta0, which is -0.67 in the fitted model. 
+
+$$\beta0=-0.67$$ 
+
+The estimated log odds of mortality among those who had diabetes in 1956 is equivalent to: 
+$$ 
+E(death)=\beta_0+\beta_1(diabetes)+\varepsilon_i
+\\E(death)=-0.67+1.92(1)
+\\E(death)= 1.25
+$$
+
+The odds ratio for the association between diabetes in 1956 and mortality, comparing those with diabetes to those without diabetes
+```{r Odds Ratio}
+or_diabetes<- oddsratio.wald(diabetes)
+print(or_diabetes)
+or_data<-(or_diabetes$data)
+or_measure<-(or_diabetes$measure)
+or_p<-(or_diabetes$p.value)
+suppressWarnings(stargazer(or_data,type="text"))
+suppressWarnings(stargazer(or_measure,type="text"))
+
+```
+The estimate of the odds ratio for the association between diabetes and mortality from the 2x2 is 6.83 and can also be describes as:
+
+The odds ratio for the association between diabetes in 1956 and mortality is 
+$$ e^{\beta1} = 6.83$$ 
+
+The odds ratio of 6.83 indicates that those with diabetes have more than 6 times the odds of dying over the 24-year follow-up period compared to those without diabetes.
+
+Conduct Hypothesis test to examine the coefficient of diabetes is significant. We will complete the Wald test which is the same as:
+$$ \frac{\beta^1}{{SE}(\beta^1)} $$ 
+
+```{r Wald Test}
+summary(logit_diabetes)
+z<-coef(summary(logit_diabetes))[,"z value"]
+suppressWarnings(stargazer(z,type="text"))
+
+```
+Hypothesis test to compare the fit of the model with and without diabetes.This would be a likelihood ratio test. 95.10 is the test statistic from the likelihood ratio test comparing the fit of the model with and without diabetes.
+
+```{r Likelihood Ratio Test}
+llr<-loglm(~death + diabetes1,xtabs(~death + diabetes1,data = FHS))
+suppressWarnings(stargazer(llr$lrt,type="text", title = "Likelihood Ratio Test"))
+
+```
+
+
+The Wald test statistic for the coefficient of diabetes is 8.71. The p values from the Wald test and the Likelihood Ratio Test are both less than 0.05, indicating that there is a significant association between diabetes and mortality. In addition, the odds ratio of 6.83 indicates that those with diabetes have more than 6 times the odds of dying over the 24-year follow-up period compared to those without diabetes.
+
+The estimate of the risk ratio for the association between diabetes and mortality from the 2x2 table
+```{r Risk Ratio}
+rr<-riskratio.wald(diabetes)
+rr_measure<-rr$measure
+rr<-rr_measure[2,1]
+
+suppressWarnings(stargazer(rr,type="text", title = "Risk Ratio"))
+
+```
+Since the Risk of Mortality in the study is high (approximately 0.35 or 35% among all participants), the odds and the risk are different from each other, and the odds ratio is more extreme (i.e., further from 1.0) than the risk ratio.
+---
+subtitle: "Diabetes at baseline and Mortality over 24 year followup" 
+---
+
+```{r Convert BMI to categorical}
+
+#BMI is currently given in a continuous factor, I will convert it to categorical where 18.5 kg/m2 is Underweight, 18.5-24.9 kg/m2 is normal, 25-29.9 kg/m2 is overweight and 30kg/m2+ is obese. 
+
+#Remove BMI1 if NA
+FHS_BMI<-FHS_BMI[!is.na(FHS_BMI$bmi1), ]
+
+#BMI for baseline checkup 
+FHS_BMI$bmi1cat<- NA 
+FHS_BMI$bmi1cat[FHS_BMI$bmi1<18.5]<-1
+FHS_BMI$bmi1cat[18.5<=FHS_BMI$bmi1 & FHS_BMI$bmi1<=24.99]<-2
+FHS_BMI$bmi1cat[25<=FHS_BMI$bmi1 & FHS_BMI$bmi1<=29.99]<-3
+FHS_BMI$bmi1cat[30<=FHS_BMI$bmi1]<-4
+
+#BMI for second checkup 
+FHS_BMI$bmi2cat<- NA 
+FHS_BMI$bmi2cat[FHS_BMI$bmi2<18.5]<-1
+FHS_BMI$bmi2cat[18.5<=FHS_BMI$bmi2 & FHS_BMI$bmi2<=24.99]<-2
+FHS_BMI$bmi2cat[25<=FHS_BMI$bmi2 & FHS_BMI$bmi2<=29.99]<-3
+FHS_BMI$bmi2cat[30<=FHS_BMI$bmi2]<-4
+
+#BMI for third and final checkup 
+FHS_BMI$bmi3cat<- NA 
+FHS_BMI$bmi3cat[FHS_BMI$bmi3<18.5]<-1
+FHS_BMI$bmi3cat[18.5<=FHS_BMI$bmi3 & FHS_BMI$bmi3<=24.99]<-2
+FHS_BMI$bmi3cat[25<=FHS_BMI$bmi3 & FHS_BMI$bmi3<=29.99]<-3
+FHS_BMI$bmi3cat[30<=FHS_BMI$bmi3]<-4
+
+```
+
+Odds ratio for mortality, comparing participants who were overweight (BMI 25 -<30 kg/m2) in 1956 to those who were normal weight (BMI 18.5 -<25 kg/m2) in 1956 (Note: the log likelihood for your model should be -2825.7898.)
+```{r Log Odds}
+
+#log Odds
+logit_bmi<-glm(death ~ relevel(factor(bmi1cat),ref='2'), data = FHS_BMI, family= "binomial")
+summary(logit_bmi)
+suppressWarnings(stargazer(logit_bmi,type="text"))
+
+
+llr_bmi<-loglm(~death + relevel(factor(bmi1cat),ref='2'),xtabs(~death + relevel(factor(bmi1cat),ref='2'),data = FHS_BMI, na.action=NULL))
+suppressWarnings(stargazer(llr_bmi$lrt,type="text", title = "Likelihood Ratio Test"))
+```
+
+```{r Odds Ratio BMI}
+#Set Reference level to Normal BMI
+FHS_BMI$bmi1cat <- relevel(factor(FHS_BMI$bmi1cat), ref = "2")
+
+#Set up Table
+BMI_Category<- table(FHS_BMI$bmi1cat,FHS_BMI$death)
+
+rownames(BMI_Category)<- c("Normal", "UnderWeight", "Overweight","Obese")
+colnames(BMI_Category)<- c("No Death","Death")
+print(BMI_Category)
+
+#Odds-Ratio
+or_bmi<- oddsratio.wald(BMI_Category)
+print(or_bmi)
+suppressWarnings(stargazer(or_bmi$measure,type="text", title = "Odds Ratio "))
+```
+
+```{r}
+ggplot(FHS, aes(factor(bmi1cat), fill = factor(sex1))) +
+geom_bar(position = "fill") + labs(x = "BMI Category", y = "Proportion
+by Sex", fill = "Sex") + theme(axis.text.x =
+element_text(angle = 45)) + geom_hline(yintercept = 0.5,
+linetype = 2)
+
+t.test(FHS$bmi1cat, FHS$death)
+FHS$educ
 ```
 
 Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
