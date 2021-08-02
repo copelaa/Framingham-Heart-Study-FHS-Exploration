@@ -1,0 +1,49 @@
+---
+title: "Propensity Score"
+output: html_notebook
+---
+
+
+```{r Install needed libraries and Packages}
+library(ggplot2)
+library(reshape2)
+library(dbplyr)
+library(readr)
+library(haven)
+library(plyr)
+library(knitr)
+library(epitools)
+library(stargazer)
+library(MASS)
+library(questionr)
+library(lmtest)
+library(zoo)
+```
+
+```{r Import Data}
+#Data is saved as a Stata File
+FHS = "https://github.com/copelaa/Framingham-Heart-Study-FHS-Exploration/blob/master/framinghamdata.dta?raw=true"
+FHS = read_stata(FHS)
+
+#Take a look at the imported data, and sunderstand the number of rows, columns and column names
+head(FHS)
+nrow(FHS)
+ncol(FHS)
+names(FHS)
+```
+
+Crude Odds Ratio for the effect of anti-hypertensive medication on incidence of stroke among those with hypertension at the baseline exam?
+Crude Odds Ratio
+$$
+ln(Stroke)=\beta_0+\beta_1(antihypertensive medication)+\varepsilon_i
+$$
+Note: be sure to exclude individuals who already had a previous stroke at the baseline exam.)
+```{r Crude Odd Ratio}
+FHS_Prop<-FHS[FHS$prevstrk1 != 1, ]
+FHS_Prop<-FHS_Prop[FHS_Prop$prevhyp1 != 0, ]
+
+stroke_lm<- glm(stroke~ bpmeds1, data = FHS_Prop, family= binomial(link = "logit"))
+
+prop_summary<- summary(stroke_lm)
+
+```
