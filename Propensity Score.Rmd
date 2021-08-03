@@ -18,6 +18,9 @@ library(MASS)
 library(questionr)
 library(lmtest)
 library(zoo)
+library(MatchIt)
+library(Rcpp)
+library(gridExtra)
 ```
 
 ```{r Import Data}
@@ -44,6 +47,104 @@ FHS_Prop<-FHS_Prop[FHS_Prop$prevhyp1 != 0, ]
 
 stroke_lm<- glm(stroke~ bpmeds1, data = FHS_Prop, family= binomial(link = "logit"))
 
-prop_summary<- summary(stroke_lm)
+#Odds Ratio
+stroke_lm_or<- as.data.frame(exp(cbind(coef(stroke_lm), confint(stroke_lm))))
+#Rename Columns + row
+names(stroke_lm_or)[1] <- "Odds Ratio"
+names(stroke_lm_or)[2] <- "Lower 95% CI"
+names(stroke_lm_or)[3] <- "Upper 95% CI"
 
+suppressWarnings(stargazer(stroke_lm, stroke_lm_or,summary=FALSE, type="text", title = "Log Odds and Odds Ratio"))
+
+```
+The Odds of Stroke for individuals that were taking anti hypertensive medication at baseline is 1.9 times greater than those who were not, excluding those who had a previous stroke at baseline.
+
+Now we want to control for some factors at baseline as they may affect whether or not an individual uses anti-hypertensive medication as well as their risk of having a stroke. 
+
+```{r Multivariate}
+
+stroke_lm_mv<- glm(stroke~ bpmeds1+age1+sysbp1+diabp1+cursmoke1+totchol1+bmi1+diabetes1, data = FHS_Prop, family= binomial(link = "logit"))
+
+#Odds Ratio
+stroke_lm_mv_or<- as.data.frame(exp(cbind(coef(stroke_lm_mv), confint(stroke_lm_mv))))
+#Rename Columns + row
+names(stroke_lm_mv_or)[1] <- "Odds Ratio"
+names(stroke_lm_mv_or)[2] <- "Lower 95% CI"
+names(stroke_lm_mv_or)[3] <- "Upper 95% CI"
+
+suppressWarnings(stargazer(stroke_lm_mv, stroke_lm_mv_or,summary=FALSE, type="text", title = "Log Odds and Odds Ratio"))
+```
+
+From the above it looks like diabetes1,cusmoke1, diabp1 and age1 may be the most significant factors. 
+
+Propensity score = probability of receiving the treatment (or intervention) as a function of confounders. With the belief that patients with similar propensity scores should show similar distributions of confounders within treatment groups (as if treatment had been randomized) 
+
+```{r Propensity score}
+
+ps_stroke_lm<- glm( bpmeds1~ age1+sysbp1+diabp1+cursmoke1+totchol1+bmi1+diabetes1, data = FHS_Prop, family= binomial(link = "logit"))
+
+#Propensity score
+
+ps_stroke <- data.frame(pr_score = predict(ps_stroke_lm, type = "response"),
+                     bpmeds1 =ps_stroke_lm$model$bpmeds1)
+head(ps_stroke)
+```
+After estimating the propensity score, let's plot histograms of the estimated propensity scores by treatment status:
+
+```{r Propensity Score Plot}
+labs <- paste( c("antihypertensive medication", "No antihypertensive medication"))
+ps_stroke %>%
+  mutate(bpmeds1 = ifelse(bpmeds1 == 1, labs[1], labs[2])) %>%
+  ggplot(aes(x = pr_score)) +
+  geom_histogram(color = "white") +
+  facet_wrap(~bpmeds1) +
+  xlab("Probability of taking antihypertensive medication") +
+  theme_bw()
+```
+
+# Executing a matching algorithm
+```{r Matching}
+#drop NAs
+FHS_nomiss<-FHS_Prop[!is.na(FHS_Prop$bpmeds1) & !is.na(FHS_Prop$sysbp1) & !is.na(FHS_Prop$diabp1) & !is.na(FHS_Prop$cursmoke1) & !is.na(FHS_Prop$age1) & !is.na(FHS_Prop$totchol1) & !is.na(FHS_Prop$bmi1) & !is.na(FHS_Prop$diabetes1),]
+
+
+ps_match<- MatchIt::matchit( bpmeds1~ age1+sysbp1+diabp1+cursmoke1+totchol1+bmi1+diabetes1, data = FHS_nomiss, method= "nearest")
+
+dta_sum<- summary(ps_match)
+plot(ps_match)
+dta_dist<- dta_sum$sum.all["distance"]
+
+#Create dataframe containing only matched observations 
+dta_m<-match.data(ps_match)
+dim(dta_m)
+
+```
+Note that the final dataset is smaller than the original: it contains 264 observations, meaning that 132 pairs of treated and control observations were matched. Also note that the final dataset contains a variable called distance, which is the propensity score.
+
+#Examining covariate balance in the matched sample 
+
+```{r Visual inspection}
+fn_bal <- function(dta, variable) {
+  dta$variable <- dta[, variable]
+  support <- c(min(dta$variable), max(dta$variable))
+  ggplot(dta, aes(x = distance, y = variable, color = bpmeds1)) +
+    geom_point(alpha = 0.2, size = 1.3) +
+    geom_smooth(method = "loess", se = F) +
+    xlab("Propensity score") +
+    ylab(variable) +
+    theme_bw() +
+    ylim(support)
+}
+
+grid.arrange(
+   fn_bal(FHS_nomiss, "age1"),
+   fn_bal(FHS_nomiss, "bmi1") + theme(legend.position = "none"),
+   fn_bal(FHS_nomiss, "totchol1"),
+   fn_bal(FHS_nomiss, "cursmoke1") + theme(legend.position = "none"),
+   fn_bal(FHS_nomiss, "diabp1"),
+   fn_bal(FHS_nomiss, "sysbp1") + theme(legend.position = "none"),
+   fn_bal(FHS_nomiss, "diabetes1"),
+   nrow = 4, widths = c(1, 0.8)
+)
+   
 ```
